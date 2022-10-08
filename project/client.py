@@ -28,7 +28,7 @@ class P2PClient():
         while True:
             password = input("Password: ").strip()
 
-            msg = pickle.dumps({"cmd": "auth", "devicename": self.devicename, "password": password})
+            msg = pickle.dumps({"cmd": "auth", "devicename": self.devicename, "password": password, "udp_port": self.p2pUDPPort})
             self.clientSocket.send(msg)
             
             reply = pickle.loads(self.clientSocket.recv(MAX_SIZE))
@@ -99,20 +99,20 @@ def main():
         
         command = user_input.split()
         
-        if command[0] == "EDG":
+        if command[0].upper() == "EDG":
             client.edg(command)
-        elif command[0] == "UED":
+        elif command[0].upper() == "UED":
             client.ued(command)
-        elif command[0] == "SCS":
+        elif command[0].upper() == "SCS":
             client.scs(command)
-        elif command[0] == "DTE":
+        elif command[0].upper() == "DTE":
             client.dte(command)
-        elif command[0] == "AED":
+        elif command[0].upper() == "AED":
             client.aed(command)
-        elif command[0] == "OUT":
+        elif command[0].upper() == "OUT":
             client.out(command)
             break
-        elif command[0] == "HELP":
+        elif command[0].upper() == "HELP":
             client.getHelp()
             
     print(f"Bye, {client.devicename}!")

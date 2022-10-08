@@ -15,7 +15,27 @@ MAX_SIZE = 4096
 #READ FROM CREDENTIALS.TXT FOR ACCOUNTS
 
 
+# writes data to given file path relative to current working directory
+def log_active_conntection(data: dict, ip_address: str):
+    
+    file_path = "edge-device-log.txt"
+    # get active device sequence number
+    try:
+        with open(file_path, 'r') as f:
+            seq_num = len(f.readlines()) + 1
+    except:
+        seq_num = 1
+    
+    timestamp = datetime.datetime.now().strftime("%d %B %Y %H:%M:%S")
+    device = data["devicename"]
+    udp_port = data["udp_port"]
+    
+    with open(file_path, 'a') as f:
+        f.write(f"{seq_num}; {timestamp}; {device}; {ip_address}; {udp_port}\n")
 
+
+# Returns true if client connection is allowed
+# Returns false if client connection is blocked
 def authenticate(connection_socket, addr, msg_obj):
     devicename = msg_obj['devicename']
     password = msg_obj['password']
@@ -31,7 +51,7 @@ def authenticate(connection_socket, addr, msg_obj):
         print("exceeded login attempts")
         
         # if connection still blocked, terminate
-        if (datetime.datetime.now() - database[devicename]["last-accessed"]).seconds < 10:
+        if (datetime.datetime.now() - database[devicename]["last-attempted"]).seconds < 10:
             connection_socket.send(pickle.dumps({"status": 404}))
             return False
         
@@ -46,6 +66,9 @@ def authenticate(connection_socket, addr, msg_obj):
         connection_socket.send(pickle.dumps({"status": 200}))
         print(f"[SUCCESSFUL AUTHENTICATION] {addr}")
         
+        log_active_conntection(msg_obj, addr[0])
+        
+        
     # unsucessfull authentication 
     else:
         database[devicename]["login_attempts"] += 1
@@ -58,7 +81,7 @@ def authenticate(connection_socket, addr, msg_obj):
         print(f"[UNSUCCESSFULL AUTHENTICATION] {addr}")
 
     # update last accessed
-    database[devicename]["last-accessed"] = datetime.datetime.now()
+    database[devicename]["last-attempted"] = datetime.datetime.now()
     return True
 
 def ued(connection_socket, addr, msg_obj):
@@ -120,7 +143,7 @@ def main():
             devicename, password = account.split(" ")
             database[devicename.strip()]["pwd"] = password.strip()
             database[devicename.strip()]["login-attemps"] = 0
-            database[devicename.strip()]["last-accessed"] = datetime.datetime.now() - datetime.timedelta(seconds=10)
+            database[devicename.strip()]["last-attempted"] = datetime.datetime.now() - datetime.timedelta(seconds=10)
 
     
     # create server socket
@@ -178,7 +201,7 @@ Database contains:
     "devicename": {
         "pwd": password,
         "login-attempts": int,
-        "last-accessed": datetime
+        "last-attempted": datetime
     }
 }
 
