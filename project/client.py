@@ -2,7 +2,6 @@
 
 from socket import *
 import pickle
-import platform
 import pickle
 import sys
     
@@ -15,7 +14,7 @@ class P2PClient():
         self.serverIp = serverIp
         self.serverPort = serverPort
         self.p2pUDPPort = p2pUDPPort
-        self.deviceName = platform.node()
+        self.devicename = "guest"
         
         # create TCP connection
         self.clientSocket = socket(AF_INET, SOCK_STREAM)
@@ -25,21 +24,25 @@ class P2PClient():
     
     def authenticate(self):
         
+        self.devicename = input("Devicename: ").strip()
         while True:
-            username = input("Username: ")
-            password = input("Password: ")
+            password = input("Password: ").strip()
 
-            msg = pickle.dumps({"cmd": "auth", "username": username, "password": password})
+            msg = pickle.dumps({"cmd": "auth", "devicename": self.devicename, "password": password})
             self.clientSocket.send(msg)
             
             reply = pickle.loads(self.clientSocket.recv(MAX_SIZE))
             
             # successful authentication
-            if reply["status"]:
+            if reply["status"] == 200:
                 return
             
-            else:
-                print("Incorrect username or password")
+            elif reply["status"] == 400:
+                print("Incorrect devicename or password. Please try again.")
+                
+            elif reply["status"] == 404:
+                print("Number of attempts exceeded. Your account has been blocked. Please ty again later.")
+                sys.exit(0)
         
         
         
@@ -112,7 +115,7 @@ def main():
         elif command[0] == "HELP":
             client.getHelp()
             
-    print(f"Bye, {client.deviceName}!")
+    print(f"Bye, {client.devicename}!")
 
 if __name__ == "__main__":
     main()
@@ -133,7 +136,7 @@ command line arguments:
 steps
 1 client initiate TCP connection with server at specified port
 2: upon connection establishment, initiate authentication processes:
-    user input username
+    user input devicename
     user input password
     send tcp segment to server
     server sends success or failure
