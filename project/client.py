@@ -165,7 +165,31 @@ class P2PClient():
 
     
     def dte(self, command):
-        print("DTE command")
+         # process args
+        try:
+            fileID = int(command[1])
+        except:
+            print("[DTE] Usage: DTE <fileID: int>")
+            return
+        
+        file_name = f"{self.devicename}-{fileID}.txt"
+        
+        # send message
+        self.clientSocket.send(pickle.dumps({
+            "cmd": "DTE",
+            "devicename": self.devicename,
+            "fileID": fileID
+        }))
+        
+        reply = pickle.loads(self.clientSocket.recv(MAX_SIZE))
+        
+        if reply["status"] == 200:
+            print(f"[DTE] Sucessfully deleted {file_name} from server.")
+        
+        elif reply["status"] == 400:
+            print(f"[DTE] error: {file_name} does not exist on server.")
+        
+      
     
     def aed(self, command):
         print("AED command")

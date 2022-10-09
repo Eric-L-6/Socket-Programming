@@ -5,12 +5,13 @@ from socket import *
 from collections import defaultdict
 from statistics import mean
 from pathlib import Path
-import pickle
 
+import pickle
 import platform
 import threading
 import datetime
 import sys
+import os
 
 MAX_SIZE = 4096
 
@@ -45,9 +46,18 @@ def log_active_connection(data: dict, ip_address: str):
     lock.release()
     
 # writes data to given file path relative to current working directory
-def log_file_upload(data: dict):
+def log_file_update(data: dict, operation: str):
+    """
+    data must contain
+    {
+        "devicename": devicename,
+        "fileID": fileID,
+        "dataAmount": dataAmount
+    }
     
-    file_path = "logs/upload-log.txt"
+    """
+    
+    file_path = f"logs/{operation}-log.txt"
     output_file = Path(file_path)
     output_file.parent.mkdir(exist_ok=True, parents=True)
     
@@ -61,7 +71,7 @@ def log_file_upload(data: dict):
     with open(file_path, 'a') as f:
         f.write(f"{device}; {timestamp}; {fileID}; {dataAmount}\n")
     lock.release()
-
+    
 
 # Returns true if client connection is allowed
 # Returns false if client connection is blocked
@@ -121,13 +131,10 @@ def ued(connection_socket, addr, msg_obj):
     downloaded_file = Path(file_path)
     downloaded_file.parent.mkdir(exist_ok=True, parents=True)    
     downloaded_file.write_text(msg_obj["data"])
-    log_file_upload(msg_obj)
+    log_file_update(msg_obj, "upload")
     
     connection_socket.send(pickle.dumps({"status": 200}))
-    
-    
-        
-    
+
 def scs(connection_socket, addr, msg_obj):
     
     print(f"[SCS] {addr} requesting {msg_obj['computation']}({msg_obj['file_name']})")
@@ -159,7 +166,29 @@ def scs(connection_socket, addr, msg_obj):
 
 
 def dte(connection_socket, addr, msg_obj):
-    pass
+    
+    
+    file_name = f"{msg_obj['devicename']}-{msg_obj['fileID']}.txt"
+    print(f"[DTE] {addr} {file_name}")
+    
+    file_path = f"user_data/{msg_obj['devicename']}/{file_name}"
+
+    try: 
+        with open(file_path, 'r') as f:
+            dataAmount = len(f.readlines())
+        
+        os.remove(file_path)
+        
+    # file doesnt exist
+    except:
+        connection_socket.send(pickle.dumps({"status": 400}))
+        return
+    
+    msg_obj['dataAmount'] = dataAmount
+    log_file_update(msg_obj, "deletion")
+    print(f"[DTE] {addr} success")
+    
+    connection_socket.send(pickle.dumps({"status": 200}))
 
 def aed(connection_socket, addr, msg_obj):
     pass
