@@ -1,8 +1,10 @@
 #! /usr/bin/env python3 
 
 from socket import *
+from pathlib import Path
 import pickle
 import pickle
+import random
 import sys
     
 MAX_SIZE = 4096
@@ -28,7 +30,7 @@ class P2PClient():
         while True:
             password = input("Password: ").strip()
 
-            msg = pickle.dumps({"cmd": "auth", "devicename": self.devicename, "password": password, "udp_port": self.p2pUDPPort})
+            msg = pickle.dumps({"cmd": "AUTH", "devicename": self.devicename, "password": password, "udp_port": self.p2pUDPPort})
             self.clientSocket.send(msg)
             
             reply = pickle.loads(self.clientSocket.recv(MAX_SIZE))
@@ -44,17 +46,123 @@ class P2PClient():
                 print("Number of attempts exceeded. Your account has been blocked. Please ty again later.")
                 sys.exit(0)
         
-        
-        
-
-    def edg(self, command):
-        print("EDG command") 
     
+    # generate file with list of integers of given length
+    def edg(self, command):
+        
+        try:
+            fileID = int(command[1])
+            dataAmount = int(command[2])
+        except:
+            print("EDG Usage: EDG <fileID: int> <dataAmount: int>")
+            return
+        
+        
+        file_path = f"client_data/{self.devicename}-{fileID}.txt"
+        output_file = Path(file_path)
+        output_file.parent.mkdir(exist_ok=True, parents=True)
+        
+        data = ""
+        for _ in range(dataAmount):
+            data = data + str(random.randint(0, dataAmount)) + "\n"
+            
+        output_file.write_text(data)
+        print(f"[EDG] Written {dataAmount} integers into {file_path}")
+
+    #TODO: manage arge files by splitting into chunks
     def ued(self, command):
-        print("UED command")
+        
+        # process args
+        try:
+            fileID = int(command[1])
+        except:
+            print("[UED] Usage: UED <fileID: int>")
+            return
+        
+        file_name = f"{self.devicename}-{fileID}.txt"
+        file_path = f"client_data/{self.devicename}-{fileID}.txt"
+        
+        msg_packet = {
+            "cmd": "UED", 
+            "devicename": self.devicename, 
+            "file_name": file_name,
+            "fileID": fileID,
+            "data": None
+        }
+        
+        header_size = sys.getsizeof(msg_packet) 
+        
+        try:
+            with open(file_path, "r") as f:
+                
+                msg_packet["dataAmount"] = len(f.readlines())
+                f.seek(0)
+                msg_packet["data"] = f.read()
+
+                """ 
+                while buffer := f.read(MAX_SIZE - header_size):
+                    msg_packet["data"] = buffer
+                    self.clientSocket.send(pickle.dumps(msg_packet))
+                 """
+            self.clientSocket.send(pickle.dumps(msg_packet))
+                
+        except:
+            print(f"UED Error: {file_name} does not exist")
+            return
+
+        try:
+            reply = pickle.loads(self.clientSocket.recv(MAX_SIZE))
+                
+            # successful authentication
+            if reply["status"] == 200:
+                print(f"[UED] Uploaded {file_name}")
+            
+            else:
+                raise Exception()
+        except:
+            print(f"[UED] Failed to upload {file_name}")
+    
+        
     
     def scs(self, command):
-        print("SCS command")
+        
+         # process args
+        try:
+            fileID = int(command[1])
+            computation = command[2].upper()
+        except:
+            print("[SCS] Usage: SCS <fileID: int> <computationOperation>")
+            return
+        
+        if computation not in {'SUM', 'AVERAGE', 'MAX', 'MIN'}:
+            print("[SCS] Supported computations: SUM, AVERAGE, MAX, MIN.")
+            return
+        
+        file_name = f"{self.devicename}-{fileID}.txt"
+        
+        # send message
+        self.clientSocket.send(pickle.dumps({
+            "cmd": "SCS",
+            "file_name": file_name,
+            "devicename": self.devicename,
+            "computation": computation
+        }))
+        
+        try:
+            reply = pickle.loads(self.clientSocket.recv(MAX_SIZE))
+                
+            # successful authentication
+            if reply["status"] == 200:
+                print(f"[SCS] {computation}({file_name}) = {reply['result']}")
+            
+            elif reply["status"] == 400:
+                print(f"[SCS] error: {file_name} has not been uploaded to the server.")
+
+            else:
+                raise Exception()
+        except:
+            print(f"[SCS] error: Failed to compute {computation}({file_name})")
+
     
     def dte(self, command):
         print("DTE command")
@@ -174,7 +282,7 @@ dataAmount: number of data samples to be generated
         created file
         Store one integer per line
 
-Resulting filename:
+Resulting file_path:
 device name - fileId . txt
 eg
 supersmartwatch-1.txt

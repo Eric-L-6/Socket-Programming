@@ -3,6 +3,8 @@
 
 from socket import *
 from collections import defaultdict
+from statistics import mean
+from pathlib import Path
 import pickle
 
 import platform
@@ -12,26 +14,53 @@ import sys
 
 MAX_SIZE = 4096
 
+lock = threading.Lock()
+
+
 #READ FROM CREDENTIALS.TXT FOR ACCOUNTS
 
 
 # writes data to given file path relative to current working directory
-def log_active_conntection(data: dict, ip_address: str):
+def log_active_connection(data: dict, ip_address: str):
     
-    file_path = "edge-device-log.txt"
+    file_path = "logs/edge-device-log.txt"
+    output_file = Path(file_path)
+    output_file.parent.mkdir(exist_ok=True, parents=True)
+    
+    timestamp = datetime.datetime.now().strftime("%d %B %Y %H:%M:%S")
+    device = data["devicename"]
+    udp_port = data["udp_port"]
+    
     # get active device sequence number
+    # mutex file read and write to avoid stale reads and corrupt writes
+    lock.acquire()
     try:
         with open(file_path, 'r') as f:
             seq_num = len(f.readlines()) + 1
     except:
         seq_num = 1
     
-    timestamp = datetime.datetime.now().strftime("%d %B %Y %H:%M:%S")
-    device = data["devicename"]
-    udp_port = data["udp_port"]
-    
     with open(file_path, 'a') as f:
         f.write(f"{seq_num}; {timestamp}; {device}; {ip_address}; {udp_port}\n")
+    lock.release()
+    
+# writes data to given file path relative to current working directory
+def log_file_upload(data: dict):
+    
+    file_path = "logs/upload-log.txt"
+    output_file = Path(file_path)
+    output_file.parent.mkdir(exist_ok=True, parents=True)
+    
+    device = data["devicename"]
+    timestamp = datetime.datetime.now().strftime("%d %B %Y %H:%M:%S")
+    fileID = data["fileID"]
+    dataAmount = data["dataAmount"]
+
+    # mutex file read and write to avoid stale reads and corrupt writes
+    lock.acquire()
+    with open(file_path, 'a') as f:
+        f.write(f"{device}; {timestamp}; {fileID}; {dataAmount}\n")
+    lock.release()
 
 
 # Returns true if client connection is allowed
@@ -47,8 +76,6 @@ def authenticate(connection_socket, addr, msg_obj):
     
     # if edge device exceeded login attempts 
     if database[devicename]["login_attempts"] >= authAttempts:
-        
-        print("exceeded login attempts")
         
         # if connection still blocked, terminate
         if (datetime.datetime.now() - database[devicename]["last-attempted"]).seconds < 10:
@@ -66,7 +93,7 @@ def authenticate(connection_socket, addr, msg_obj):
         connection_socket.send(pickle.dumps({"status": 200}))
         print(f"[SUCCESSFUL AUTHENTICATION] {addr}")
         
-        log_active_conntection(msg_obj, addr[0])
+        log_active_connection(msg_obj, addr[0])
         
         
     # unsucessfull authentication 
@@ -84,11 +111,52 @@ def authenticate(connection_socket, addr, msg_obj):
     database[devicename]["last-attempted"] = datetime.datetime.now()
     return True
 
+# TODO handle larger files
 def ued(connection_socket, addr, msg_obj):
-    pass
 
+    print(f"[UED] {addr}")
+    print(f"Recieved file: {msg_obj['file_name']} (size {msg_obj['dataAmount']})")
+    
+    file_path = f"user_data/{msg_obj['devicename']}/{msg_obj['file_name']}"
+    downloaded_file = Path(file_path)
+    downloaded_file.parent.mkdir(exist_ok=True, parents=True)    
+    downloaded_file.write_text(msg_obj["data"])
+    log_file_upload(msg_obj)
+    
+    connection_socket.send(pickle.dumps({"status": 200}))
+    
+    
+        
+    
 def scs(connection_socket, addr, msg_obj):
-    pass
+    
+    print(f"[SCS] {addr} requesting {msg_obj['computation']}({msg_obj['file_name']})")
+    
+    try:
+        file_path = f"user_data/{msg_obj['devicename']}/{msg_obj['file_name']}"
+        print(file_path)
+        with open(file_path, "r") as f: 
+            data = list(map(lambda num : int(num), f.readlines()))
+        
+        if msg_obj['computation'] == 'SUM':
+            result = sum(data)
+        elif msg_obj['computation'] == 'AVERAGE':
+            result = mean(data)
+        elif msg_obj['computation'] == 'MAX':
+            result = max(data)
+        elif msg_obj['computation'] == 'MIN':
+            result = min(data)
+        
+        connection_socket.send(pickle.dumps({
+            "status": 200,
+            "result": result
+        }))
+        
+    except:
+        connection_socket.send(pickle.dumps({
+            "status": 400,
+        }))
+
 
 def dte(connection_socket, addr, msg_obj):
     pass
@@ -96,6 +164,11 @@ def dte(connection_socket, addr, msg_obj):
 def aed(connection_socket, addr, msg_obj):
     pass
 
+
+# TODO send acknowledgement after removing from edge devices log
+def out(connection_socket, addr, msg_obj):
+    print(f"[CLIENT REGQUESTED OUT] {addr}")
+    
 
 def process_connection(connection_socket, addr):
     print(f"[NEW CONNECTION] {addr} connected.")
@@ -105,7 +178,7 @@ def process_connection(connection_socket, addr):
         msg_obj = pickle.loads(msg_raw)
         
         
-        if msg_obj["cmd"] == "auth":
+        if msg_obj["cmd"] == "AUTH":
             if not authenticate(connection_socket, addr, msg_obj):
                 print(f"[EXCEEDED AUTHENTICATION ATTEMPT LIMIT] {addr}.")
                 break
@@ -118,7 +191,7 @@ def process_connection(connection_socket, addr):
         elif msg_obj["cmd"] == "AED":
             aed(connection_socket, addr, msg_obj)
         elif msg_obj["cmd"] == "OUT":
-            print(f"[CLIENT REGQUESTED OUT] {addr}")
+            out(connection_socket, addr, msg_obj)
             break
     
     # will only break out of loop if out command is given or authentication exceeds login_attempts
