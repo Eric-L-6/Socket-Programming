@@ -26,6 +26,10 @@ delete_lock = threading.Lock()
 # writes data to given file path relative to current working directory
 def log_active_connection(data: dict, ip_address: str):
     
+    # logs stored as:
+    # seq_num; timestamp; devicename; ip_address; port
+    
+    
     file_path = "logs/edge-device-log.txt"
     output_file = Path(file_path)
     output_file.parent.mkdir(exist_ok=True, parents=True)
@@ -48,7 +52,6 @@ def log_active_connection(data: dict, ip_address: str):
     device_log_lock.release()
     
 def remove_device_from_log(addr, msg_obj):
-    return
     file_path = "logs/edge-device-log.txt"
     tmp_file = "logs/edge-device-log-tmp.txt"
     
@@ -68,9 +71,6 @@ def remove_device_from_log(addr, msg_obj):
     os.remove(file_path)
     os.rename(tmp_file, file_path)
                 
-                
-                
-    
     
 # writes data to given file path relative to current working directory
 def log_file_update(data: dict, operation: str):

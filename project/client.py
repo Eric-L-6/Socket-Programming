@@ -215,7 +215,7 @@ class P2PClient():
     def out(self, command):
         print("Out command")
         
-        self.clientSocket.send(pickle.dumps({"cmd": "OUT"}))
+        self.clientSocket.send(pickle.dumps({"cmd": "OUT", "devicename": self.devicename}))
         self.clientSocket.close()
     
     def getHelp(self):
