@@ -192,7 +192,25 @@ class P2PClient():
       
     
     def aed(self, command):
-        print("AED command")
+        
+        # send aed request       
+        self.clientSocket.send(pickle.dumps({"cmd": "AED", "devicename": self.devicename}))
+
+        # process reply
+        reply = pickle.loads(self.clientSocket.recv(MAX_SIZE))
+        
+        if reply["status"] == 200:
+            for msg in reply["msg"]:
+                print(f"[{msg['device']}] listening on {msg['addr']}:{msg['port']}. Active since {msg['timestamp']}.")
+            
+        elif reply["status"] == 400:
+            print(f"[AED] Server: No other active edge devices.")
+            
+        elif reply["status"] == 404:
+            print(f"[AED] Error: cannot determine active edge devices.")
+        
+        
+
     
     def out(self, command):
         print("Out command")

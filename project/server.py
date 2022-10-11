@@ -15,7 +15,9 @@ import os
 
 MAX_SIZE = 4096
 
-lock = threading.Lock()
+device_log_lock = threading.Lock()
+upload_lock = threading.Lock()
+delete_lock = threading.Lock()
 
 
 #READ FROM CREDENTIALS.TXT FOR ACCOUNTS
@@ -34,7 +36,7 @@ def log_active_connection(data: dict, ip_address: str):
     
     # get active device sequence number
     # mutex file read and write to avoid stale reads and corrupt writes
-    lock.acquire()
+    device_log_lock.acquire()
     try:
         with open(file_path, 'r') as f:
             seq_num = len(f.readlines()) + 1
@@ -43,7 +45,32 @@ def log_active_connection(data: dict, ip_address: str):
     
     with open(file_path, 'a') as f:
         f.write(f"{seq_num}; {timestamp}; {device}; {ip_address}; {udp_port}\n")
-    lock.release()
+    device_log_lock.release()
+    
+def remove_device_from_log(addr, msg_obj):
+    return
+    file_path = "logs/edge-device-log.txt"
+    tmp_file = "logs/edge-device-log-tmp.txt"
+    
+    device = msg_obj["devicename"]
+
+    seq = 1
+    with open(tmp_file, "w") as tmp:
+        with open(file_path, 'r') as log:
+            for line in iter(log):
+                data = line.split("; ")
+                if device == data[2]:
+                    continue
+                data[0] = str(seq) 
+                tmp.write("; ".join(data))
+                seq += 1
+    
+    os.remove(file_path)
+    os.rename(tmp_file, file_path)
+                
+                
+                
+    
     
 # writes data to given file path relative to current working directory
 def log_file_update(data: dict, operation: str):
@@ -67,6 +94,7 @@ def log_file_update(data: dict, operation: str):
     dataAmount = data["dataAmount"]
 
     # mutex file read and write to avoid stale reads and corrupt writes
+    lock = upload_lock if operation == "update" else delete_lock
     lock.acquire()
     with open(file_path, 'a') as f:
         f.write(f"{device}; {timestamp}; {fileID}; {dataAmount}\n")
@@ -191,12 +219,41 @@ def dte(connection_socket, addr, msg_obj):
     connection_socket.send(pickle.dumps({"status": 200}))
 
 def aed(connection_socket, addr, msg_obj):
-    pass
+    
+    print(f"[AED] {addr}")
+    devicename = msg_obj['devicename']
+    file_path = "logs/edge-device-log.txt"
 
+    data = []
+    status = 400
+    device_log_lock.acquire()
+    try:
+        with open(file_path, 'r') as f:
+            data = [line.split("; ") for line in f.readlines()]
+    except:
+        status = 404
+    device_log_lock.release()
+    
+    # [{device: devicename, addr: ip_address, port: port, timestamp: timestamp}]
+    msg = [{
+        "timestamp": device[1],
+        "device": device[2],
+        "addr": device[3],
+        "port": device[4].strip()
+    } for device in data if devicename != device[2]]
+    
+    # set success status
+    if msg and status != 404:
+        status = 200
+    
+    connection_socket.send(pickle.dumps({"status": status, "msg": msg}))
+    
 
 # TODO send acknowledgement after removing from edge devices log
 def out(connection_socket, addr, msg_obj):
     print(f"[CLIENT REGQUESTED OUT] {addr}")
+    remove_device_from_log(addr, msg_obj)
+    connection_socket.send(pickle.dumps({"status": 200}))
     
 
 def process_connection(connection_socket, addr):
@@ -241,6 +298,7 @@ def main():
     # load credentials from credentials.txt
     database = defaultdict(lambda: defaultdict(int))
     with open("credentials.txt", "r") as accounts:
+        
         while account := accounts.readline():
             devicename, password = account.split(" ")
             database[devicename.strip()]["pwd"] = password.strip()
@@ -266,7 +324,8 @@ def main():
             newThread.start()
     except KeyboardInterrupt:
         print("\nTerminating Server")
-        return  
+    
+    serverSocket.close()  
     
 if __name__ == "__main__":
     main()
