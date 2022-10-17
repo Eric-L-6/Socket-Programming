@@ -79,7 +79,7 @@ def log_file_update(data: dict, operation: str):
     {
         "devicename": devicename,
         "fileID": fileID,
-        "dataAmount": dataAmount
+        "file_size": file_size
     }
     
     """
@@ -91,18 +91,21 @@ def log_file_update(data: dict, operation: str):
     device = data["devicename"]
     timestamp = datetime.datetime.now().strftime("%d %B %Y %H:%M:%S")
     fileID = data["fileID"]
-    dataAmount = data["dataAmount"]
+    file_size = data["file_size"]
 
     # mutex file read and write to avoid stale reads and corrupt writes
     lock = upload_lock if operation == "update" else delete_lock
     lock.acquire()
     with open(file_path, 'a') as f:
-        f.write(f"{device}; {timestamp}; {fileID}; {dataAmount}\n")
+        f.write(f"{device}; {timestamp}; {fileID}; {file_size}\n")
     lock.release()
     
 
-# Returns true if client connection is allowed
+# Returns true if client connection is allowed to persist
 # Returns false if client connection is blocked
+# blocks account name
+#IF GIVEN INVALID ACCOUNT NAME, PROMPT TO RETRY INDEFINATELY
+
 def authenticate(connection_socket, addr, msg_obj):
     devicename = msg_obj['devicename']
     password = msg_obj['password']
@@ -112,18 +115,23 @@ def authenticate(connection_socket, addr, msg_obj):
     print(f"Password: {password}")
     
     
+    # Device name does not exist on server
+    if devicename not in database:
+        connection_socket.send(pickle.dumps({"status": 401}))
+        print(f"[UNKNOWN DEVICE] {addr}")
+        return True
+    
     # if edge device exceeded login attempts 
     if database[devicename]["login_attempts"] >= authAttempts:
         
         # if connection still blocked, terminate
         if (datetime.datetime.now() - database[devicename]["last-attempted"]).seconds < 10:
-            connection_socket.send(pickle.dumps({"status": 404}))
+            connection_socket.send(pickle.dumps({"status": 418}))
             return False
         
         # reset login attemps
         else:
             database[devicename]["login_attempts"] = 0
-        
     
     #Successful authentication
     if database[devicename]["pwd"] == password:
@@ -139,10 +147,11 @@ def authenticate(connection_socket, addr, msg_obj):
         database[devicename]["login_attempts"] += 1
         
         if database[devicename]["login_attempts"] >= authAttempts:
-            connection_socket.send(pickle.dumps({"status": 404}))
+            connection_socket.send(pickle.dumps({"status": 418}))
             return False
         
-        connection_socket.send(pickle.dumps({"status": 400}))
+        
+        connection_socket.send(pickle.dumps({"status": 403}))
         print(f"[UNSUCCESSFULL AUTHENTICATION] {addr}")
 
     # update last accessed
@@ -153,14 +162,19 @@ def authenticate(connection_socket, addr, msg_obj):
 def ued(connection_socket, addr, msg_obj):
 
     print(f"[UED] {addr}")
-    print(f"Recieved file: {msg_obj['file_name']} (size {msg_obj['dataAmount']})")
+    print(f"Downloading file: {msg_obj['file_name']}...")
     
     file_path = f"user_data/{msg_obj['devicename']}/{msg_obj['file_name']}"
     downloaded_file = Path(file_path)
     downloaded_file.parent.mkdir(exist_ok=True, parents=True)    
-    downloaded_file.write_text(msg_obj["data"])
-    log_file_update(msg_obj, "upload")
     
+    with open(file_path, "wb") as f:
+        for _ in range(int(msg_obj["segments"])):
+            data = connection_socket.recv(MAX_SIZE)
+            f.write(data)
+    
+    log_file_update(msg_obj, "upload")
+    print(f"Downloaded file: {msg_obj['file_name']} {msg_obj['file_size']} bytes")
     connection_socket.send(pickle.dumps({"status": 200}))
 
 def scs(connection_socket, addr, msg_obj):
@@ -203,7 +217,7 @@ def dte(connection_socket, addr, msg_obj):
 
     try: 
         with open(file_path, 'r') as f:
-            dataAmount = len(f.readlines())
+            file_size = len(f.readlines())
         
         os.remove(file_path)
         
@@ -212,7 +226,7 @@ def dte(connection_socket, addr, msg_obj):
         connection_socket.send(pickle.dumps({"status": 400}))
         return
     
-    msg_obj['dataAmount'] = dataAmount
+    msg_obj['file_size'] = file_size
     log_file_update(msg_obj, "deletion")
     print(f"[DTE] {addr} success")
     
@@ -235,12 +249,15 @@ def aed(connection_socket, addr, msg_obj):
     device_log_lock.release()
     
     # [{device: devicename, addr: ip_address, port: port, timestamp: timestamp}]
-    msg = [{
-        "timestamp": device[1],
-        "device": device[2],
-        "addr": device[3],
-        "port": device[4].strip()
-    } for device in data if devicename != device[2]]
+    msg = {}
+    for device in data:
+        if devicename != device[2]:
+            msg[device[2]] = {
+                "timestamp": device[1],
+                "device": device[2],
+                "addr": device[3],
+                "port": device[4].strip()
+            }
     
     # set success status
     if msg and status != 404:
@@ -285,6 +302,8 @@ def process_connection(connection_socket, addr):
     print(f"[CONNECTION CLOSED] {addr} disconnected.")
         
 
+# when server starts, delete existing logs
+# network is empty at startup = no logs, no files, no connected devices
 def main():
     global database
     global authAttempts
@@ -292,7 +311,7 @@ def main():
         serverPort = int(sys.argv[1])
         authAttempts = int(sys.argv[2])
     except:
-        print(f"Usage: {sys.argv[0]} <server-port-number: int> <authentication-attempt-number: int>")
+        print(f"Usage: {sys.argv[0]} <server-port-number: int [1024 - 65535]> <allowed-authentication-attempts: int [1 - 5]>")
         sys.exit(1)
     
     # load credentials from credentials.txt
@@ -411,7 +430,7 @@ UED - Upload edge data
 
     Client send data samples through TCP
     Server adds to FILE upload-log.txt the following
-        edgeDeviceName; timestamp; fileID; dataAmount
+        edgeDeviceName; timestamp; fileID; file_size
         eg
         supersmartwatch; 30 September 2022 10:31:13; 1; 10
     
@@ -437,7 +456,7 @@ DTE: Delete the data file
     server find corresponding file => check for existance
     if exists, remove file
     add to log file deletion-log.txt
-        edgeDeviceName; timestamp; fileID; dataAmount
+        edgeDeviceName; timestamp; fileID; file_size
         eg
         supersmartwatch; 30 September 2022 10:33:13; 1; 10
     return acknowledgement of success to client
