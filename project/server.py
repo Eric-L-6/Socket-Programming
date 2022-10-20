@@ -12,6 +12,7 @@ import threading
 import datetime
 import sys
 import os
+import shutil
 
 MAX_SIZE = 4096
 
@@ -58,6 +59,7 @@ def remove_device_from_log(addr, msg_obj):
     device = msg_obj["devicename"]
 
     seq = 1
+    device_log_lock.acquire()
     with open(tmp_file, "w") as tmp:
         with open(file_path, 'r') as log:
             for line in iter(log):
@@ -70,6 +72,8 @@ def remove_device_from_log(addr, msg_obj):
     
     os.remove(file_path)
     os.rename(tmp_file, file_path)
+    
+    device_log_lock.release()
                 
     
 # writes data to given file path relative to current working directory
@@ -150,7 +154,6 @@ def authenticate(connection_socket, addr, msg_obj):
             connection_socket.send(pickle.dumps({"status": 418}))
             return False
         
-        
         connection_socket.send(pickle.dumps({"status": 403}))
         print(f"[UNSUCCESSFULL AUTHENTICATION] {addr}")
 
@@ -158,7 +161,6 @@ def authenticate(connection_socket, addr, msg_obj):
     database[devicename]["last-attempted"] = datetime.datetime.now()
     return True
 
-# TODO handle larger files
 def ued(connection_socket, addr, msg_obj):
 
     print(f"[UED] {addr}")
@@ -313,6 +315,13 @@ def main():
     except:
         print(f"Usage: {sys.argv[0]} <server-port-number: int [1024 - 65535]> <allowed-authentication-attempts: int [1 - 5]>")
         sys.exit(1)
+    
+    
+    # clear all prev logs:
+    try:
+        shutil.rmtree('logs')
+    except:
+        pass
     
     # load credentials from credentials.txt
     database = defaultdict(lambda: defaultdict(int))

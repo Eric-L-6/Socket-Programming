@@ -10,6 +10,7 @@ import pickle
 import random
 import time
 import sys
+import re
 import os
 import math
     
@@ -31,20 +32,25 @@ class P2PClient():
         self.isConnected = False
     
         # create udp socket
-        self.udpSocket = socket(AF_INET, SOCK_DGRAM)
-        self.udpSocket.bind(('', p2pUDPPort))
-        self.udpSubProcess = multiprocessing.Process(target=self._udp_listen)
+        self.udpListeningSocket = socket(AF_INET, SOCK_DGRAM)
+        self.udpListeningSocket.bind(('', p2pUDPPort))
+        self.udpListenSubProcess = multiprocessing.Process(target=self._udp_listen)
         self.uvfThreads= []
+        self.recvThreads = []
         
     
     #
     def authenticate(self):
         
         self.devicename = input("Devicename: ").strip()
+        
         while True:
             password = input("Password: ").strip()
-
             msg = pickle.dumps({"cmd": "AUTH", "devicename": self.devicename, "password": password, "udp_port": self.p2pUDPPort})
+            if sys.getsizeof(msg) >= MAX_SIZE:
+                print("[ERROR] Password and Device name is too large.")
+                continue
+            
             self.clientSocket.send(msg)
             
             reply = pickle.loads(self.clientSocket.recv(MAX_SIZE))
@@ -92,24 +98,6 @@ class P2PClient():
         print(f"[EDG] Written {dataAmount} integers into {file_path}")
         
 
-    def send_file(self, file_path, header):
-        
-        try:
-            file_size = os.stat(file_path).st_size
-            header["file_size"] = file_size
-            header["segments"] = math.ceil(file_size / MAX_SIZE)
-            self.clientSocket.send(pickle.dumps(header))
-            
-            #send file as binary segments
-            with open(file_path, "rb") as f:
-                while buffer := f.read(MAX_SIZE):
-                    self.clientSocket.send(buffer)
-
-            return True
-        except:
-            return False
-        pass
-
     def ued(self, command):
         
         # process args
@@ -129,24 +117,31 @@ class P2PClient():
             "fileID": fileID,
         }
         
-        # failed to send 
-        if not self.send_file(file_path, header):
+        try:
+            file_size = os.stat(file_path).st_size
+            header["file_size"] = file_size
+            header["segments"] = math.ceil(file_size / MAX_SIZE)
+            self.clientSocket.send(pickle.dumps(header))
+            
+            #send file as binary segments
+            with open(file_path, "rb") as f:
+                while buffer := f.read(MAX_SIZE):
+                    self.clientSocket.send(buffer)
+            
+        except:
             print(f"UED Error: {file_name} does not exist")
             return
 
-        try:
-            reply = pickle.loads(self.clientSocket.recv(MAX_SIZE))
-                
-            # successful authentication
-            if reply["status"] == 200:
-                print(f"[UED] Uploaded {file_name}")
+
+        reply = pickle.loads(self.clientSocket.recv(MAX_SIZE))
             
-            else:
-                raise Exception()
-        except:
-            print(f"[UED] Failed to upload {file_name}")
-    
+        # successful authentication
+        if reply["status"] == 200:
+            print(f"[UED] Uploaded {file_name}")
         
+        else:
+            print(f"[UED] Failed to upload {file_name}")
+
     
     def scs(self, command):
         
@@ -248,9 +243,14 @@ class P2PClient():
         reply = pickle.loads(self.clientSocket.recv(MAX_SIZE))
         
         if reply["status"] == 200:
-            print(f"[OUT] Successfully logged out.")
+            print("[OUT] Successfully logged out.")
+            print("Closing terminal...")
             self.clientSocket.close()
-            self.udpSubProcess.terminate()
+            self.udpListenSubProcess.terminate()
+            for thread in self.uvfThreads:
+                thread.join()
+            for thread in self.recvThreads:
+                thread.join()
             self.isConnected = False
             return True
         
@@ -272,14 +272,62 @@ class P2PClient():
         
         print(f"UVF Command sending {file_name} to {target_device} at {target_addr} {target_port}")
         
-         # send message
-        self.udpSocket.sendto(pickle.dumps("Hello there"), (target_addr, target_port))
+        # create new socket
+        udp_socket = socket(AF_INET, SOCK_DGRAM)
         
-        time.sleep(4)
+        header = {
+            "cmd": "UVF",
+            "device_name": self.devicename,
+            "file_name": re.search('[^\/]*$', file_name).group(0),
+        }
+    
+        try:
+            file_size = os.stat(file_name).st_size
+            header["file_size"] = file_size
+            header["segments"] = math.ceil(file_size / MAX_SIZE)
+        except:
+            print(f"[UVF] Error: {file_name} does not exist")
+            self.uvfThreads.remove(threading.current_thread()) 
+            return
+
+        print(f"sending to {target_addr} {target_port} {target_device}")
+        print(header)
         
-        print(f"\nUVF Command {file_name} sent to {target_device} at {target_addr} {target_port}")
+        # send header
+        udp_socket.sendto(pickle.dumps(header), (target_addr, target_port))
+        
+        # recieve confirmation + new dest recieving port
+        reply, new_addr = udp_socket.recvfrom(MAX_SIZE)     
+        reply = pickle.loads(reply)
+        
+        udp_socket.sendto(pickle.dumps(reply), new_addr)
+        
+        print("Reply")
+        print(reply)
+        
+        if reply["status"] == 200:
+            #send file as binary segments
+            with open(file_name, "rb") as f:
+                segment = 0
+                while buffer := f.read(MAX_SIZE):
+                    udp_socket.sendto(buffer, new_addr)
+                    reply = pickle.loads(udp_socket.recv(MAX_SIZE))
+                    if reply["ack"] != segment:
+                        print("[UVF] Error: packet Loss]")
+                        print(f"Sent {segment - 1}/{header['segments']} packets. ")
+                        return
+                    segment += 1
+        
+        else:
+            print("[UVF] Error: Failed to send {file_name} to {target_device}.")
+    
+            
+        print(f"\nUVF Command {file_name} sent to {target_device} at {new_addr}")
         if self.isConnected:
-            print("Enter one of the following commands (EDG, UED, SCS, DTE, AED, OUT, HELP): ", end = '', flush=True) 
+            print("Enter one of the following commands (EDG, UED, SCS, DTE, AED, OUT, HELP): ", end = '', flush=True)
+        
+        # clean up thread references
+        self.uvfThreads.remove(threading.current_thread()) 
  
     def uvf(self, command):
 
@@ -304,24 +352,67 @@ class P2PClient():
         else:
             target_addr = self.peers[target_device]["addr"]
             target_port = int(self.peers[target_device]["port"])
-        
-        
-        # open new thread to send file
-        threading.Thread(target=self._uvf_send, args = [target_device, target_addr, target_port, file_name]).start()
-       
 
+        # open new thread to send file
+        uvf_thread = threading.Thread(target=self._uvf_send, args = [target_device, target_addr, target_port, file_name])
+        self.uvfThreads.append(uvf_thread)
+        uvf_thread.start()
+
+
+    def _udp_recv(self, msg_obj, senderAddr):
+        
+        # create new udp socket to recv file
+        recv_socket = socket(AF_INET, SOCK_DGRAM)
+        
+        print("recieving file")
+        print(msg_obj)
+        recv_socket.sendto(pickle.dumps({"status": 200}), senderAddr)
+
+        ack = recv_socket.recv(MAX_SIZE)
+        print(pickle.loads(ack))
+
+
+        file_path = f"{msg_obj['device_name']}/{msg_obj['file_name']}"
+        downloaded_file = Path(file_path)
+        downloaded_file.parent.mkdir(exist_ok=True, parents=True)    
+    
+        with open(file_path, "wb") as f:
+            for segment in range(int(msg_obj["segments"])):
+                data = recv_socket.recv(MAX_SIZE)
+                f.write(data)
+                recv_socket.sendto(pickle.dumps({"ack": segment}), senderAddr)
+        
+        
+        
+        print(f"Recieved {msg_obj['file_name']} from {msg_obj['device_name']}")
+        # repeat default message
+        print("Enter one of the following commands (EDG, UED, SCS, DTE, AED, OUT, HELP): ", end = '', flush=True)
+        self.recvThreads.remove(threading.current_thread()) 
+    
 
     # continuously run in seperate thread
     def _udp_listen(self):
         while self.isConnected:
-            data, senderAddr = self.udpSocket.recvfrom(MAX_SIZE)
-            print(f"\n{senderAddr} sent {pickle.loads(data)}")
-            # repeat default message
-            print("Enter one of the following commands (EDG, UED, SCS, DTE, AED, OUT, HELP): ", end = '', flush=True)
+            data, senderAddr = self.udpListeningSocket.recvfrom(MAX_SIZE)
+            data = pickle.loads(data)
+            recv_thread = threading.Thread(target=self._udp_recv, args = (data, senderAddr))
+            self.recvThreads.append(recv_thread)
+            recv_thread.start()            
+
 
     def udp_listen(self):
         # begin listening
-        self.udpSubProcess.start()
+        print("listening...")
+        self.udpListenSubProcess.start()
+
+"""
+UDP source sends packet to UDP dest 
+including: filename, file_size,
+UDP dest sends ack to source with NEW UDP SOCKET + port running on seperate thread
+UDP source then sends subsequent packets of file to the new UDP socket at dest
+og dest UDP socket continues to listen
+
+"""
         
 
 # OS chooses the port to send UDP data to
@@ -337,8 +428,13 @@ def main():
         print(f"Usage: {sys.argv[0]} <server-ip-address> <server-port-number: int> <P2P-UDP-server-port-number: int [1024 - 65535]>")
         sys.exit(1)
     
-
-    client = P2PClient(serverIp, serverPort, p2pUDPPort)
+    try:
+        client = P2PClient(serverIp, serverPort, p2pUDPPort)
+    except:
+        print(f"Error: No server found at {serverIp}:{serverPort}")
+        return
+    
+    
     client.authenticate()
     client.udp_listen()
     print("Welcome!")
