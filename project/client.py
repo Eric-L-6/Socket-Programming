@@ -227,14 +227,12 @@ class P2PClient():
             for msg in reply["msg"].values():
                 print(f"[{msg['device']}] listening on {msg['addr']}:{msg['port']}. Active since {msg['timestamp']}.")
             
-        elif reply["status"] == 400:
+        elif reply["status"] == 404:
             print(f"[AED] Server: No other active edge devices.")
             
-        elif reply["status"] == 404:
+        elif reply["status"] == 400:
             print(f"[AED] Error: cannot determine active edge devices.")
         
-        
-
     
     def out(self, command):
         self.clientSocket.send(pickle.dumps({"cmd": "OUT", "devicename": self.devicename}))
@@ -267,10 +265,17 @@ class P2PClient():
     AED - Active Edge Devices
     OUT - Exit Edge network
     """)
+
+    def _terminate_uvf(self):
+        if self.isConnected:
+            print("Enter one of the following commands (EDG, UED, SCS, DTE, AED, OUT, HELP): ", end = '', flush=True)
+        self.uvfThreads.remove(threading.current_thread()) 
+        return
         
-    def _uvf_send(self, target_device, target_addr, target_port, file_name):
+    def _uvf_send(self, target_device, target_addr, target_port, file_path):
         
-        print(f"UVF Command sending {file_name} to {target_device} at {target_addr} {target_port}")
+        file_name = re.search('[^\/]*$', file_path).group(0)
+        
         
         # create new socket
         udp_socket = socket(AF_INET, SOCK_DGRAM)
@@ -278,20 +283,17 @@ class P2PClient():
         header = {
             "cmd": "UVF",
             "device_name": self.devicename,
-            "file_name": re.search('[^\/]*$', file_name).group(0),
+            "file_name": file_name,
         }
-    
+
         try:
-            file_size = os.stat(file_name).st_size
+            file_size = os.stat(file_path).st_size
             header["file_size"] = file_size
             header["segments"] = math.ceil(file_size / MAX_SIZE)
         except:
-            print(f"[UVF] Error: {file_name} does not exist")
-            self.uvfThreads.remove(threading.current_thread()) 
+            print(f"\n[UVF] Error: {file_name} does not exist")
+            self._terminate_uvf()
             return
-
-        print(f"sending to {target_addr} {target_port} {target_device}")
-        print(header)
         
         # send header
         udp_socket.sendto(pickle.dumps(header), (target_addr, target_port))
@@ -302,32 +304,31 @@ class P2PClient():
         
         udp_socket.sendto(pickle.dumps(reply), new_addr)
         
-        print("Reply")
-        print(reply)
         
         if reply["status"] == 200:
+            
+            print(f"\n[UVF]: Sending {file_name} to {target_device} at {target_addr} {target_port}...")
+            
             #send file as binary segments
-            with open(file_name, "rb") as f:
+            with open(file_path, "rb") as f:
                 segment = 0
                 while buffer := f.read(MAX_SIZE):
                     udp_socket.sendto(buffer, new_addr)
                     reply = pickle.loads(udp_socket.recv(MAX_SIZE))
                     if reply["ack"] != segment:
                         print("[UVF] Error: packet Loss]")
-                        print(f"Sent {segment - 1}/{header['segments']} packets. ")
+                        print(f"Sent {segment - 1}/{header['segments']} packets.")
+                        self._terminate_uvf()
                         return
                     segment += 1
         
         else:
             print("[UVF] Error: Failed to send {file_name} to {target_device}.")
+            self._terminate_uvf()
     
             
-        print(f"\nUVF Command {file_name} sent to {target_device} at {new_addr}")
-        if self.isConnected:
-            print("Enter one of the following commands (EDG, UED, SCS, DTE, AED, OUT, HELP): ", end = '', flush=True)
-        
-        # clean up thread references
-        self.uvfThreads.remove(threading.current_thread()) 
+        print(f"[UVF]: {file_name} sent to {target_device} at {new_addr}")
+        self._terminate_uvf()
  
     def uvf(self, command):
 
@@ -364,12 +365,10 @@ class P2PClient():
         # create new udp socket to recv file
         recv_socket = socket(AF_INET, SOCK_DGRAM)
         
-        print("recieving file")
-        print(msg_obj)
+        print("\nRecieving file..")
         recv_socket.sendto(pickle.dumps({"status": 200}), senderAddr)
 
         ack = recv_socket.recv(MAX_SIZE)
-        print(pickle.loads(ack))
 
 
         file_path = f"{msg_obj['device_name']}/{msg_obj['file_name']}"
@@ -431,7 +430,7 @@ def main():
     try:
         client = P2PClient(serverIp, serverPort, p2pUDPPort)
     except:
-        print(f"Error: No server found at {serverIp}:{serverPort}")
+        print(f"Error: No server found at {serverIp}:{serverPort} or UDP port {p2pUDPPort} is currently being used.")
         return
     
     

@@ -22,6 +22,9 @@ delete_lock = threading.Lock()
 
 
 #READ FROM CREDENTIALS.TXT FOR ACCOUNTS
+def getFilePath(devicename, filename):
+    return f"server_data/{devicename}/{filename}"
+
 
 
 # writes data to given file path relative to current working directory
@@ -166,7 +169,7 @@ def ued(connection_socket, addr, msg_obj):
     print(f"[UED] {addr}")
     print(f"Downloading file: {msg_obj['file_name']}...")
     
-    file_path = f"user_data/{msg_obj['devicename']}/{msg_obj['file_name']}"
+    file_path = getFilePath(msg_obj['devicename'], msg_obj['file_name'])
     downloaded_file = Path(file_path)
     downloaded_file.parent.mkdir(exist_ok=True, parents=True)    
     
@@ -184,7 +187,7 @@ def scs(connection_socket, addr, msg_obj):
     print(f"[SCS] {addr} requesting {msg_obj['computation']}({msg_obj['file_name']})")
     
     try:
-        file_path = f"user_data/{msg_obj['devicename']}/{msg_obj['file_name']}"
+        file_path = getFilePath(msg_obj['devicename'], msg_obj['file_name'])
         print(file_path)
         with open(file_path, "r") as f: 
             data = list(map(lambda num : int(num), f.readlines()))
@@ -215,7 +218,7 @@ def dte(connection_socket, addr, msg_obj):
     file_name = f"{msg_obj['devicename']}-{msg_obj['fileID']}.txt"
     print(f"[DTE] {addr} {file_name}")
     
-    file_path = f"user_data/{msg_obj['devicename']}/{file_name}"
+    file_path = getFilePath(msg_obj['devicename'], file_name)
 
     try: 
         with open(file_path, 'r') as f:
@@ -226,11 +229,12 @@ def dte(connection_socket, addr, msg_obj):
     # file doesnt exist
     except:
         connection_socket.send(pickle.dumps({"status": 400}))
+        print(f"Failed to delete file {file_name}. File not found.")
         return
     
     msg_obj['file_size'] = file_size
     log_file_update(msg_obj, "deletion")
-    print(f"[DTE] {addr} success")
+    print(f"Successfully deleted {file_name}.")
     
     connection_socket.send(pickle.dumps({"status": 200}))
 
@@ -241,13 +245,13 @@ def aed(connection_socket, addr, msg_obj):
     file_path = "logs/edge-device-log.txt"
 
     data = []
-    status = 400
+    status = 404
     device_log_lock.acquire()
     try:
         with open(file_path, 'r') as f:
             data = [line.split("; ") for line in f.readlines()]
     except:
-        status = 404
+        status = 400
     device_log_lock.release()
     
     # [{device: devicename, addr: ip_address, port: port, timestamp: timestamp}]
@@ -262,7 +266,7 @@ def aed(connection_socket, addr, msg_obj):
             }
     
     # set success status
-    if msg and status != 404:
+    if msg and status != 400:
         status = 200
     
     connection_socket.send(pickle.dumps({"status": status, "msg": msg}))
