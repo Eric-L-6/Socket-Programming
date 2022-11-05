@@ -1,6 +1,5 @@
 #! /usr/bin/env python3 
 
-
 from socket import *
 from collections import defaultdict
 from statistics import mean
@@ -262,7 +261,7 @@ def aed(connection_socket, addr, msg_obj):
     result = {}
     for device in data:
         if devicename != device[2]:
-            msg[device[2]] = {
+            result[device[2]] = {
                 "timestamp": device[1],
                 "device": device[2],
                 "addr": device[3],
@@ -270,7 +269,7 @@ def aed(connection_socket, addr, msg_obj):
             }
     
     # set success status
-    if msg and status != 400:
+    if result and status != 400:
         status = 200
     
     connection_socket.send(pickle.dumps({"status": status, "result": result}))

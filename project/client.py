@@ -150,7 +150,7 @@ class P2PClient():
             fileID = int(command[1])
             computation = command[2].upper()
         except:
-            print("[SCS] Usage: SCS <fileID: int> <computationOperation>")
+            print("[SCS] Usage: SCS <fileID: int> <computation: SUM, AVERAGE, MAX, MIN>")
             return
         
         if computation not in {'SUM', 'AVERAGE', 'MAX', 'MIN'}:
@@ -175,7 +175,7 @@ class P2PClient():
                 print(f"[SCS] {computation}({file_name}) = {reply['result']}")
             
             elif reply["status"] == 400:
-                print(f"[SCS] error: {file_name} has not been uploaded to the server.")
+                print(f"[SCS] error: {file_name} does not exist on server.")
 
             else:
                 raise Exception()
@@ -406,9 +406,6 @@ class P2PClient():
         # begin listening
         print("listening...")
         self.udp_listen_subprocess.start()
-
-r
-        
 
 # OS chooses the port to send UDP data to
 # client udp port: port that will be used to ONLY RECIEVE DATA
