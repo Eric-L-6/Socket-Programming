@@ -21,11 +21,11 @@ upload_lock = threading.Lock()
 delete_lock = threading.Lock()
 
 
+############## Auxiliary Functions: File manupulation #############
+
 #READ FROM CREDENTIALS.TXT FOR ACCOUNTS
-def getFilePath(devicename, filename):
-    return f"server_data/{devicename}/{filename}"
-
-
+def get_file_path(devicename, file_name):
+    return f"server_data/{devicename}/{file_name}"
 
 # writes data to given file path relative to current working directory
 def log_active_connection(data: dict, ip_address: str):
@@ -108,6 +108,8 @@ def log_file_update(data: dict, operation: str):
     lock.release()
     
 
+####################### Primary Functions #########################
+
 # Returns true if client connection is allowed to persist
 # Returns false if client connection is blocked
 # blocks account name
@@ -129,7 +131,7 @@ def authenticate(connection_socket, addr, msg_obj):
         return True
     
     # if edge device exceeded login attempts 
-    if database[devicename]["login_attempts"] >= authAttempts:
+    if database[devicename]["login_attempts"] >= auth_attempts:
         
         # if connection still blocked, terminate
         if (datetime.datetime.now() - database[devicename]["last-attempted"]).seconds < 10:
@@ -153,7 +155,7 @@ def authenticate(connection_socket, addr, msg_obj):
     else:
         database[devicename]["login_attempts"] += 1
         
-        if database[devicename]["login_attempts"] >= authAttempts:
+        if database[devicename]["login_attempts"] >= auth_attempts:
             connection_socket.send(pickle.dumps({"status": 418}))
             return False
         
@@ -169,7 +171,7 @@ def ued(connection_socket, addr, msg_obj):
     print(f"[UED] {addr}")
     print(f"Downloading file: {msg_obj['file_name']}...")
     
-    file_path = getFilePath(msg_obj['devicename'], msg_obj['file_name'])
+    file_path = get_file_path(msg_obj['devicename'], msg_obj['file_name'])
     downloaded_file = Path(file_path)
     downloaded_file.parent.mkdir(exist_ok=True, parents=True)    
     
@@ -182,12 +184,14 @@ def ued(connection_socket, addr, msg_obj):
     print(f"Downloaded file: {msg_obj['file_name']} {msg_obj['file_size']} bytes")
     connection_socket.send(pickle.dumps({"status": 200}))
 
+
+# Perform computation on specified file
 def scs(connection_socket, addr, msg_obj):
     
     print(f"[SCS] {addr} requesting {msg_obj['computation']}({msg_obj['file_name']})")
     
     try:
-        file_path = getFilePath(msg_obj['devicename'], msg_obj['file_name'])
+        file_path = get_file_path(msg_obj['devicename'], msg_obj['file_name'])
         print(file_path)
         with open(file_path, "r") as f: 
             data = list(map(lambda num : int(num), f.readlines()))
@@ -211,14 +215,13 @@ def scs(connection_socket, addr, msg_obj):
             "status": 400,
         }))
 
-
+# delete file
 def dte(connection_socket, addr, msg_obj):
-    
-    
+
     file_name = f"{msg_obj['devicename']}-{msg_obj['fileID']}.txt"
     print(f"[DTE] {addr} {file_name}")
     
-    file_path = getFilePath(msg_obj['devicename'], file_name)
+    file_path = get_file_path(msg_obj['devicename'], file_name)
 
     try: 
         with open(file_path, 'r') as f:
@@ -238,6 +241,7 @@ def dte(connection_socket, addr, msg_obj):
     
     connection_socket.send(pickle.dumps({"status": 200}))
 
+# return active edge devices
 def aed(connection_socket, addr, msg_obj):
     
     print(f"[AED] {addr}")
@@ -255,7 +259,7 @@ def aed(connection_socket, addr, msg_obj):
     device_log_lock.release()
     
     # [{device: devicename, addr: ip_address, port: port, timestamp: timestamp}]
-    msg = {}
+    result = {}
     for device in data:
         if devicename != device[2]:
             msg[device[2]] = {
@@ -269,10 +273,10 @@ def aed(connection_socket, addr, msg_obj):
     if msg and status != 400:
         status = 200
     
-    connection_socket.send(pickle.dumps({"status": status, "msg": msg}))
+    connection_socket.send(pickle.dumps({"status": status, "result": result}))
     
 
-# TODO send acknowledgement after removing from edge devices log
+# remove device from active edge devices
 def out(connection_socket, addr, msg_obj):
     print(f"[CLIENT REGQUESTED OUT] {addr}")
     remove_device_from_log(addr, msg_obj)
@@ -312,10 +316,10 @@ def process_connection(connection_socket, addr):
 # network is empty at startup = no logs, no files, no connected devices
 def main():
     global database
-    global authAttempts
+    global auth_attempts
     try:
         serverPort = int(sys.argv[1])
-        authAttempts = int(sys.argv[2])
+        auth_attempts = int(sys.argv[2])
     except:
         print(f"Usage: {sys.argv[0]} <server-port-number: int [1024 - 65535]> <allowed-authentication-attempts: int [1 - 5]>")
         sys.exit(1)
@@ -339,25 +343,25 @@ def main():
 
     
     # create server socket
-    serverSocket = socket(AF_INET, SOCK_STREAM)
+    server_socket = socket(AF_INET, SOCK_STREAM)
     
     # bind socket to port number
-    serverSocket.bind(('localhost', serverPort))
+    server_socket.bind(('localhost', serverPort))
     
     # begin listening
-    serverSocket.listen(2) 
+    server_socket.listen(2) 
     
     print(f"[LISTENING] Server Port: {serverPort}")
     
     try:
         while True:
-            connection_socket, addr = serverSocket.accept()
-            newThread = threading.Thread(target=process_connection, args = (connection_socket, addr))
-            newThread.start()
+            connection_socket, addr = server_socket.accept()
+            new_thread = threading.Thread(target=process_connection, args = (connection_socket, addr))
+            new_thread.start()
     except KeyboardInterrupt:
         print("\nTerminating Server")
     
-    serverSocket.close()  
+    server_socket.close()  
     
 if __name__ == "__main__":
     main()

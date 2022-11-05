@@ -19,24 +19,24 @@ MAX_SIZE = 4096
 class P2PClient():
     
     
-    def __init__(self, serverIp, serverPort, p2pUDPPort):
-        self.serverIp = serverIp
-        self.serverPort = serverPort
-        self.p2pUDPPort = p2pUDPPort
+    def __init__(self, server_ip, server_port, p2p_udp_port):
+        self.server_ip = server_ip
+        self.server_port = server_port
+        self.p2p_udp_port = p2p_udp_port
         self.devicename = "guest"
         self.peers = {}
         
         # create TCP connection
-        self.clientSocket = socket(AF_INET, SOCK_STREAM)
-        self.clientSocket.connect((self.serverIp, self.serverPort))
-        self.isConnected = False
+        self.client_socket = socket(AF_INET, SOCK_STREAM)
+        self.client_socket.connect((self.server_ip, self.server_port))
+        self.is_connected = False
     
         # create udp socket
-        self.udpListeningSocket = socket(AF_INET, SOCK_DGRAM)
-        self.udpListeningSocket.bind(('', p2pUDPPort))
-        self.udpListenSubProcess = multiprocessing.Process(target=self._udp_listen)
-        self.uvfThreads= []
-        self.recvThreads = []
+        self.udp_listening_socket = socket(AF_INET, SOCK_DGRAM)
+        self.udp_listening_socket.bind(('', p2p_udp_port))
+        self.udp_listen_subprocess = multiprocessing.Process(target=self._udp_listen)
+        self.uvf_threads= []
+        self.recv_threads = []
         
     
     #
@@ -46,18 +46,18 @@ class P2PClient():
         
         while True:
             password = input("Password: ").strip()
-            msg = pickle.dumps({"cmd": "AUTH", "devicename": self.devicename, "password": password, "udp_port": self.p2pUDPPort})
+            msg = pickle.dumps({"cmd": "AUTH", "devicename": self.devicename, "password": password, "udp_port": self.p2p_udp_port})
             if sys.getsizeof(msg) >= MAX_SIZE:
                 print("[ERROR] Password and Device name is too large.")
                 continue
             
-            self.clientSocket.send(msg)
+            self.client_socket.send(msg)
             
-            reply = pickle.loads(self.clientSocket.recv(MAX_SIZE))
+            reply = pickle.loads(self.client_socket.recv(MAX_SIZE))
             
             # successful authentication
             if reply["status"] == 200:
-                self.isConnected = True
+                self.is_connected = True
                 return
             
             # unauthorized. Client unknown
@@ -70,7 +70,7 @@ class P2PClient():
             elif reply["status"] == 403:
                 print("Incorrect password. Please try again.")
             
-            # teapot does not serve potential scammers
+            # Blocked from multiple authentication failures.
             elif reply["status"] == 418:
                 print("Number of attempts exceeded. Your account has been blocked. Please ty again later.")
                 sys.exit(0)
@@ -81,9 +81,9 @@ class P2PClient():
         
         try:
             fileID = int(command[1])
-            dataAmount = int(command[2])
+            data_amount = int(command[2])
         except:
-            print("EDG Usage: EDG <fileID: int> <dataAmount: int>")
+            print("EDG Usage: EDG <fileID: int> <data_amount: int>")
             return
         
         
@@ -92,10 +92,10 @@ class P2PClient():
         output_file.parent.mkdir(exist_ok=True, parents=True)
         
         with open(file_path, "w") as f:
-            for _ in range(dataAmount):
-                f.write(str(random.randint(0, dataAmount)) + "\n")
+            for _ in range(data_amount):
+                f.write(str(random.randint(0, data_amount)) + "\n")
 
-        print(f"[EDG] Written {dataAmount} integers into {file_path}")
+        print(f"[EDG] Written {data_amount} integers into {file_path}")
         
 
     def ued(self, command):
@@ -121,19 +121,19 @@ class P2PClient():
             file_size = os.stat(file_path).st_size
             header["file_size"] = file_size
             header["segments"] = math.ceil(file_size / MAX_SIZE)
-            self.clientSocket.send(pickle.dumps(header))
+            self.client_socket.send(pickle.dumps(header))
             
             #send file as binary segments
             with open(file_path, "rb") as f:
                 while buffer := f.read(MAX_SIZE):
-                    self.clientSocket.send(buffer)
+                    self.client_socket.send(buffer)
             
         except:
             print(f"UED Error: {file_name} does not exist")
             return
 
 
-        reply = pickle.loads(self.clientSocket.recv(MAX_SIZE))
+        reply = pickle.loads(self.client_socket.recv(MAX_SIZE))
             
         # successful authentication
         if reply["status"] == 200:
@@ -160,15 +160,15 @@ class P2PClient():
         file_name = f"{self.devicename}-{fileID}.txt"
         
         # send message
-        self.clientSocket.send(pickle.dumps({
+        self.client_socket.send(pickle.dumps({
             "cmd": "SCS",
-            "file_name": file_name,
             "devicename": self.devicename,
+            "file_name": file_name,
             "computation": computation
         }))
         
         try:
-            reply = pickle.loads(self.clientSocket.recv(MAX_SIZE))
+            reply = pickle.loads(self.client_socket.recv(MAX_SIZE))
                 
             # successful authentication
             if reply["status"] == 200:
@@ -194,13 +194,13 @@ class P2PClient():
         file_name = f"{self.devicename}-{fileID}.txt"
         
         # send message
-        self.clientSocket.send(pickle.dumps({
+        self.client_socket.send(pickle.dumps({
             "cmd": "DTE",
             "devicename": self.devicename,
             "fileID": fileID
         }))
         
-        reply = pickle.loads(self.clientSocket.recv(MAX_SIZE))
+        reply = pickle.loads(self.client_socket.recv(MAX_SIZE))
         
         if reply["status"] == 200:
             print(f"[DTE] Sucessfully deleted {file_name} from server.")
@@ -213,19 +213,19 @@ class P2PClient():
     def aed(self, display=True):
         
         # send aed request       
-        self.clientSocket.send(pickle.dumps({"cmd": "AED", "devicename": self.devicename}))
+        self.client_socket.send(pickle.dumps({"cmd": "AED", "devicename": self.devicename}))
 
         # process reply
-        reply = pickle.loads(self.clientSocket.recv(MAX_SIZE))
+        reply = pickle.loads(self.client_socket.recv(MAX_SIZE))
 
         # update internal cache of peers
-        self.peers = reply["msg"]
+        self.peers = reply["result"]
         if not display:
             return
 
         if reply["status"] == 200:
-            for msg in reply["msg"].values():
-                print(f"[{msg['device']}] listening on {msg['addr']}:{msg['port']}. Active since {msg['timestamp']}.")
+            for res in reply["result"].values():
+                print(f"[{res['device']}] listening on {res['addr']}:{res['port']}. Active since {res['timestamp']}.")
             
         elif reply["status"] == 404:
             print(f"[AED] Server: No other active edge devices.")
@@ -235,28 +235,28 @@ class P2PClient():
         
     
     def out(self, command):
-        self.clientSocket.send(pickle.dumps({"cmd": "OUT", "devicename": self.devicename}))
+        self.client_socket.send(pickle.dumps({"cmd": "OUT", "devicename": self.devicename}))
         
         # process reply
-        reply = pickle.loads(self.clientSocket.recv(MAX_SIZE))
+        reply = pickle.loads(self.client_socket.recv(MAX_SIZE))
         
         if reply["status"] == 200:
             print("[OUT] Successfully logged out.")
             print("Closing terminal...")
-            self.clientSocket.close()
-            self.udpListenSubProcess.terminate()
-            for thread in self.uvfThreads:
+            self.client_socket.close()
+            self.udp_listen_subprocess.terminate()
+            for thread in self.uvf_threads:
                 thread.join()
-            for thread in self.recvThreads:
+            for thread in self.recv_threads:
                 thread.join()
-            self.isConnected = False
+            self.is_connected = False
             return True
         
         else:
             print(f"[OUT] Error: Unable to log out.")
             return False
     
-    def getHelp(self):
+    def get_help(self):
         print("""Available commands
     EDG - Edge data generation
     UED - Upload edge data
@@ -266,10 +266,13 @@ class P2PClient():
     OUT - Exit Edge network
     """)
 
+    ############################## P2P Functionality ################################
+    
+
     def _terminate_uvf(self):
-        if self.isConnected:
+        if self.is_connected:
             print("Enter one of the following commands (EDG, UED, SCS, DTE, AED, OUT, HELP): ", end = '', flush=True)
-        self.uvfThreads.remove(threading.current_thread()) 
+        self.uvf_threads.remove(threading.current_thread()) 
         return
         
     def _uvf_send(self, target_device, target_addr, target_port, file_path):
@@ -356,7 +359,7 @@ class P2PClient():
 
         # open new thread to send file
         uvf_thread = threading.Thread(target=self._uvf_send, args = [target_device, target_addr, target_port, file_name])
-        self.uvfThreads.append(uvf_thread)
+        self.uvf_threads.append(uvf_thread)
         uvf_thread.start()
 
 
@@ -365,7 +368,7 @@ class P2PClient():
         # create new udp socket to recv file
         recv_socket = socket(AF_INET, SOCK_DGRAM)
         
-        print("\nRecieving file..")
+        print("\nRecieving file...")
         recv_socket.sendto(pickle.dumps({"status": 200}), senderAddr)
 
         ack = recv_socket.recv(MAX_SIZE)
@@ -386,32 +389,25 @@ class P2PClient():
         print(f"Recieved {msg_obj['file_name']} from {msg_obj['device_name']}")
         # repeat default message
         print("Enter one of the following commands (EDG, UED, SCS, DTE, AED, OUT, HELP): ", end = '', flush=True)
-        self.recvThreads.remove(threading.current_thread()) 
+        self.recv_threads.remove(threading.current_thread()) 
     
 
     # continuously run in seperate thread
     def _udp_listen(self):
-        while self.isConnected:
-            data, senderAddr = self.udpListeningSocket.recvfrom(MAX_SIZE)
+        while self.is_connected:
+            data, senderAddr = self.udp_listening_socket.recvfrom(MAX_SIZE)
             data = pickle.loads(data)
             recv_thread = threading.Thread(target=self._udp_recv, args = (data, senderAddr))
-            self.recvThreads.append(recv_thread)
+            self.recv_threads.append(recv_thread)
             recv_thread.start()            
 
 
     def udp_listen(self):
         # begin listening
         print("listening...")
-        self.udpListenSubProcess.start()
+        self.udp_listen_subprocess.start()
 
-"""
-UDP source sends packet to UDP dest 
-including: filename, file_size,
-UDP dest sends ack to source with NEW UDP SOCKET + port running on seperate thread
-UDP source then sends subsequent packets of file to the new UDP socket at dest
-og dest UDP socket continues to listen
-
-"""
+r
         
 
 # OS chooses the port to send UDP data to
@@ -420,17 +416,17 @@ og dest UDP socket continues to listen
 def main():
     
     try:
-        serverIp = sys.argv[1]
-        serverPort = int(sys.argv[2])
-        p2pUDPPort = int(sys.argv[3])
+        server_ip = sys.argv[1]
+        server_port = int(sys.argv[2])
+        p2p_udp_port = int(sys.argv[3])
     except:
         print(f"Usage: {sys.argv[0]} <server-ip-address> <server-port-number: int> <P2P-UDP-server-port-number: int [1024 - 65535]>")
         sys.exit(1)
     
     try:
-        client = P2PClient(serverIp, serverPort, p2pUDPPort)
+        client = P2PClient(server_ip, server_port, p2p_udp_port)
     except:
-        print(f"Error: No server found at {serverIp}:{serverPort} or UDP port {p2pUDPPort} is currently being used.")
+        print(f"Error: No server found at {server_ip}:{server_port} or UDP port {p2p_udp_port} is currently being used.")
         return
     
     
@@ -458,7 +454,7 @@ def main():
         elif command[0].upper() == "UVF":
             client.uvf(command)
         elif command[0].upper() == "HELP":
-            client.getHelp()
+            client.get_help()
         else:
             print("[ERROR] Unknown command: " + command[0])
             
@@ -506,7 +502,7 @@ Available commands
     OUT - Exit Edge network
 
 EDG - Edge data generation 
-input: 'EDG' <fileId: int> <dataAmount: int>
+input: 'EDG' <fileId: int> <data_amount: int>
 Need to check for correct input
 
 
@@ -514,10 +510,10 @@ fileId: unique identifier for file
     if file already exists, simply overwrite the existing data
 
 
-dataAmount: number of data samples to be generated
+data_amount: number of data samples to be generated
     Data samples:
         each datasample can be a randomly generated integer
-        For example dataAmount = 10, randomly generate 10 integers and store in 
+        For example data_amount = 10, randomly generate 10 integers and store in 
         created file
         Store one integer per line
 
